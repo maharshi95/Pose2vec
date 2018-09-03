@@ -1,4 +1,5 @@
 import multiprocessing
+import traceback
 from contextlib import closing
 from multiprocessing import Pool
 import numpy as np
@@ -10,7 +11,7 @@ from . import prior_sk_data as psk_data
 
 sk_data = psk_data
 
-default_coordinate_transform = 'euler'
+default_angles = 'azimuth'
 
 euler_fx = EulerFuncs('rxyz')
 
@@ -23,13 +24,17 @@ def set_skeleton_data(skeleton_data):
 
 
 def set_angle_convention(angles):
-    global default_coordinate_transform
-    default_coordinate_transform = angles
+    global default_angles
+    default_angles = angles
 
 
-def unit_norm(v, axis=0):
+def unit_norm(v, axis=-1):
     norm = np.linalg.norm(v, axis=axis, keepdims=True)
     return v / np.maximum(norm, 1e-15)
+
+
+def proj(u, v, axis=-1):
+    return v * (np.sum(u * v, axis=axis, keepdims=True))
 
 
 def mat2euler(T):
@@ -60,26 +65,44 @@ def getT(alpha, beta, gamma):
     return np.dot(np.dot(T_a, T_b), T_g)
 
 
-def gram_schmidt(A):
-    if len(A.shape) != 2 or A.shape[0] != A.shape[1]:
-        raise Exception('GramSchmidt: not valid shape %d' % A.shape)
-    n = A.shape[0]
+# def gram_schmidt(A):
+#     if len(A.shape) != 2 or A.shape[0] != A.shape[1]:
+#         raise Exception('GramSchmidt: not valid shape %d' % A.shape)
+#     n = A.shape[0]
+#
+#     B = np.zeros((n, n))
+#
+#     B[0] = unit_norm(A[0])
+#
+#     for i in range(1, n):
+#         v = A[i]
+#         U = B[:i]
+#         pc = np.dot(U, v)
+#         p = np.dot(U.T, pc)
+#         v = v - p
+#         v = unit_norm(v)
+#         if np.linalg.norm(v) < eps:
+#             raise Exception('GramSchmidt: 0 norm exception : %s' % str(v))
+#         B[i] = v
+#     return B
 
-    B = np.zeros((n, n))
 
-    B[0] = unit_norm(A[0])
-
-    for i in range(1, n):
-        v = A[i]
-        U = B[:i]
-        pc = np.dot(U, v)
-        p = np.dot(U.T, pc)
-        v = v - p
-        v = unit_norm(v)
-        if np.linalg.norm(v) < eps:
-            raise Exception('GramSchmidt: 0 norm exception : %s' % str(v))
-        B[i] = v
-    return B
+def gram_schmidt(V):
+    # Works only for 3x3 matrices
+    # V: [B, 3, 3]
+    rank = len(V.shape)
+    if rank > 3 or rank < 2:
+        raise Exception("gram_schmidt: invalid rank: %d" % rank)
+    if rank == 2:
+        V = V[None, :, :]
+    # basis [B, 3, 3]
+    u0 = unit_norm(V[:, 0])
+    u1 = unit_norm(V[:, 1] - proj(V[:, 1], u0))
+    u2 = unit_norm(V[:, 2] - proj(V[:, 2], u0) - proj(V[:, 2], u1))
+    U = np.concatenate([u0[:, None, :], u1[:, None, :], u2[:, None, :]], axis=1)
+    if rank == 2:
+        U = U[0]
+    return U
 
 
 def get_eulerian_local_coordinates(skeleton, sk_data=sk_data):
@@ -96,7 +119,29 @@ def get_eulerian_local_coordinates(skeleton, sk_data=sk_data):
     y_ = unit_norm(np.cross(l - r, n - r))
     x_ = np.cross(y_, z_)
 
-    return x_, y_, z_
+    return np.matrix([x_, y_, z_])
+
+
+def get_azimuthal_local_coordinates(skeleton, sk_data=sk_data):
+    right_hip = sk_data.get_joint_index('right_hip')
+    left_hip = sk_data.get_joint_index('left_hip')
+
+    r = skeleton[right_hip]
+    l = skeleton[left_hip]
+
+    z_ = unit_norm(np.array([0., 0., 1.]))
+    x_ = unit_norm((r - l) * np.array([1., 1., 0.]))
+    y_ = np.cross(z_, x_)
+
+    return np.matrix([x_, y_, z_])
+
+
+def get_local_coordinates(skeleton, angles, sk_data=sk_data):
+    if angles == 'euler':
+        return get_eulerian_local_coordinates(skeleton, sk_data)
+    if angles == 'azimuth':
+        return get_azimuthal_local_coordinates(skeleton, sk_data)
+    raise NotImplementedError('Invalid angles: %s' % angles)
 
 
 def get_transform_matrices(skeleton_batch, sk_data=sk_data):
@@ -131,38 +176,15 @@ def get_z_transform_matrices(skeleton_batch, sk_data=sk_data):
     return np.concatenate([x_, y_, z_], axis=1)
 
 
-def get_azimuthal_local_coordinates(skeleton, sk_data=sk_data):
-    right_hip = sk_data.get_joint_index('right_hip')
-    left_hip = sk_data.get_joint_index('left_hip')
-
-    r = skeleton[right_hip]
-    l = skeleton[left_hip]
-
-    z_ = unit_norm(np.array([0., 0., 1.]))
-    x_ = unit_norm((r - l) * np.array([1., 1., 0.]))
-    y_ = np.cross(z_, x_)
-    return x_, y_, z_
-
-
-def get_local_coordinates(skeleton, sk_data=sk_data, system=default_coordinate_transform):
-    if system == 'euler':
-        return get_eulerian_local_coordinates(skeleton, sk_data)
-    if system == 'azimuth':
-        return get_azimuthal_local_coordinates(skeleton, sk_data)
-    raise NotImplementedError('Invalid system: %s' % system)
-
-
-def get_global_angles_and_transform(skeleton, sk_data=sk_data):
-    x_, y_, z_ = get_local_coordinates(skeleton, sk_data, default_coordinate_transform)
-
-    B = np.matrix([x_, y_, z_])
+def get_global_angles_and_transform(skeleton, angles=default_angles, sk_data=sk_data):
+    B = get_local_coordinates(skeleton, angles, sk_data)
 
     alpha, beta, gamma = mat2euler(B)
 
     return alpha, beta, gamma, np.array(skeleton * B.T)
 
 
-def get_global_angles_and_transform_batch(skeleton_batch, angles='azimuth', sk_data=sk_data):
+def get_global_angles_and_transform_batch(skeleton_batch, angles=default_angles, sk_data=sk_data):
     # [B, 3, 3]
     if angles == 'euler':
         transform_mats = get_transform_matrices(skeleton_batch, sk_data)
@@ -205,6 +227,11 @@ def prior_get_normal(x1, a, x):
     return unit_norm(n), flag
 
 
+def prior_get_normal_batch(u, v, w):
+    cond = np.logical_or(np.linalg.norm(w - v, axis=-1) < eps, np.linalg.norm(w + v, axis=-1) < eps)
+    return unit_norm(np.where(cond[:, None], np.cross(w, u), np.cross(v, w)), axis=-1)
+
+
 def prior_global2local(skeleton):
     a = sk_data.arbitary_vec
     D = sk_data.D
@@ -240,6 +267,51 @@ def prior_global2local(skeleton):
     return dSl
 
 
+def prior_global2local_batch(skeleton_batch):
+    # [3, ]
+    a = sk_data.arbitary_vec
+
+    # [17, 3]
+    D = sk_data.D
+    parents = sk_data.limb_parents
+
+    # [B, 17, 3]
+    dS = skeleton_batch[:, parents] - skeleton_batch
+
+    left_shoulder_batch = dS[:, sk_data.joint_map['left_shoulder']]
+    right_shoulder_batch = dS[:, sk_data.joint_map['right_shoulder']]
+    left_hip = dS[:, sk_data.joint_map['left_hip']]
+    right_hip = dS[:, sk_data.joint_map['right_hip']]
+
+    shldr = left_shoulder_batch - right_shoulder_batch
+    hip = left_hip - right_hip
+
+    dSl = dS.copy()
+
+    for i in sk_data.child:
+
+        if i in sk_data.upper_limbs:
+            u = shldr if i in sk_data.neck_joints else hip
+            u = unit_norm(u, axis=-1)
+            v = unit_norm(dS[:, 1])
+        else:
+            u = dS[:, parents[i]]
+            u = unit_norm(u, axis=-1)
+
+            x1 = np.matmul(RT, D[parents[i]])
+            x2 = np.dot(RT, a)
+            x3 = u
+            v = prior_get_normal_batch(x1, x2, x3)
+
+        w = unit_norm(np.cross(u, v), axis=-1)
+        R = gram_schmidt(np.array([u, v, w]).transpose([1, 0, 2]))
+        RT = R.transpose([0, 2, 1])
+        ds = dS[:, i, :, None]
+        dSl[:, i] = np.matmul(R, ds)[:, :, 0]
+
+    return dSl
+
+
 def prior_estimate_absolute_positions(dS):
     S = np.zeros(dS.shape)
     limb_order = sk_data.limb_order
@@ -248,6 +320,17 @@ def prior_estimate_absolute_positions(dS):
 
     for i in limb_order[1:]:
         S[i] = S[parent[i]] - dS[i]
+    return S
+
+
+def prior_estimate_absolute_positions_batch(dS):
+    S = np.zeros(dS.shape)
+    limb_order = sk_data.limb_order
+    parent = sk_data.limb_parents
+    S[:, limb_order[0]] = 0.
+
+    for i in limb_order[1:]:
+        S[:, i] = S[:, parent[i]] - dS[:, i]
     return S
 
 
@@ -285,9 +368,56 @@ def prior_local2global(dS_local):
             R = gram_schmidt(np.array([u, v, w]))
             dS[i] = np.dot(R.T, dS_local[i])
         except:
+            traceback.print_exc()
             raise Exception('Error in %d joint: %s %s' % (i, u, v))
 
     S = prior_estimate_absolute_positions(dS)
+    return S
+
+
+def prior_local2global_batch(dS_local):
+    a = sk_data.arbitary_vec
+    D = sk_data.D
+    parents = sk_data.limb_parents
+
+    left_shoulder_batch = dS_local[:, sk_data.joint_map['left_shoulder']]
+    right_shoulder_batch = dS_local[:, sk_data.joint_map['right_shoulder']]
+    left_hip = dS_local[:, sk_data.joint_map['left_hip']]
+    right_hip = dS_local[:, sk_data.joint_map['right_hip']]
+
+    shldr = left_shoulder_batch - right_shoulder_batch
+    hip = left_hip - right_hip
+
+    dS = np.ones(dS_local.shape) * np.nan
+    dS[:, sk_data.torso_joints] = dS_local[:, sk_data.torso_joints]
+
+    for i in sk_data.child:
+
+        if i in sk_data.upper_limbs:
+            u = shldr if i in sk_data.neck_joints else hip
+            u = unit_norm(u, axis=-1)
+            v = unit_norm(dS[:, 1], axis=-1)
+
+        else:
+            u = dS[:, parents[i]]
+            u = unit_norm(u, axis=-1)
+
+            x1 = np.matmul(RT, D[parents[i]])
+            x2 = np.dot(RT, a)
+            x3 = u
+            v = prior_get_normal_batch(x1, x2, x3)
+
+        w = np.cross(u, v)
+        w = unit_norm(w)
+        try:
+            R = gram_schmidt(np.array([u, v, w]).transpose([1, 0, 2]))
+            RT = R.transpose([0, 2, 1])
+            dS[:, i] = np.matmul(RT, dS_local[:, i, :, None])[:, :, 0]
+        except:
+            traceback.print_exc()
+            raise Exception('Error in %d joint: %s %s' % (i, u, v))
+
+    S = prior_estimate_absolute_positions_batch(dS)
     return S
 
 
@@ -299,6 +429,7 @@ def root_relative_to_local_skeleton(skeleton):
         local_skeleton = prior_global2local(view_norm_skeleton)
         return np.array([alpha, beta, gamma]), view_norm_skeleton, local_skeleton
     except Exception as ex:
+        traceback.print_exc()
         print ex, 'Error while processing: '
         print skeleton
 
@@ -310,6 +441,7 @@ def root_relative_to_view_norm_skeleton(skeleton):
         alpha, beta, gamma, view_norm_skeleton = get_global_angles_and_transform(skeleton)
         return np.array([alpha, beta, gamma]), view_norm_skeleton
     except Exception as ex:
+        traceback.print_exc()
         print ex, 'Error while processing: '
         print skeleton
 
@@ -332,7 +464,7 @@ def view_norm_to_root_relative_skeleton(global_angles, view_norm_skeleton):
 ###########################################################
 ####### Root Relative to Local Conversion Functions #######
 
-def __root_relative_to_local_skeleton_batch_basic_impl(skeleton_batch):
+def __root_relative_to_local_skeleton_batch_brute_impl(skeleton_batch):
     # [d1, d2, d3..., num_joints, 3]
     # only operates on last two dimensions, rest will be considered batch
     orig_shape = skeleton_batch.shape
@@ -354,7 +486,7 @@ def __root_relative_to_local_skeleton_batch_basic_impl(skeleton_batch):
     return global_angles_batch, view_norm_skeleton_batch, local_skeleton_batch
 
 
-def __root_relative_to_local_skeleton_batch_fast_impl(skeleton_batch):
+def __root_relative_to_local_skeleton_batch_basic_impl(skeleton_batch, angles):
     # [d1, d2, d3..., num_joints, 3]
     # only operates on last two dimensions, rest will be considered batch
     orig_shape = skeleton_batch.shape
@@ -384,11 +516,27 @@ def __root_relative_to_local_skeleton_batch_fast_impl(skeleton_batch):
     return global_angles_batch, view_norm_skeleton_batch, local_skeleton_batch
 
 
+def __root_relative_to_local_skeleton_batch_fast_impl(skeleton_batch, angles):
+    # [d1, d2, d3..., num_joints, 3]
+    # only operates on last two dimensions, rest will be considered batch
+    orig_shape = skeleton_batch.shape
+    skeleton_batch = skeleton_batch.reshape(-1, *orig_shape[-2:])
+
+    global_angles_batch, view_norm_skeleton_batch = get_global_angles_and_transform_batch(skeleton_batch, angles)
+    local_skeleton_batch = prior_global2local_batch(view_norm_skeleton_batch)
+
+    global_angles_batch = global_angles_batch.reshape(*[orig_shape[:-2] + (3,)])
+    view_norm_skeleton_batch = view_norm_skeleton_batch.reshape(*orig_shape)
+    local_skeleton_batch = local_skeleton_batch.reshape(*orig_shape)
+
+    return global_angles_batch, view_norm_skeleton_batch, local_skeleton_batch
+
+
 ###########################################################
 ####### Root Relative to View Norm Conversion Functions #######
 
 
-def __root_relative_to_view_norm_skeleton_batch_fast_impl(skeleton_batch):
+def __root_relative_to_view_norm_skeleton_batch_basic_impl(skeleton_batch, angles):
     # [d1, d2, d3..., num_joints, 3]
     # only operates on last two dimensions, rest will be considered batch
     orig_shape = skeleton_batch.shape
@@ -415,7 +563,7 @@ def __root_relative_to_view_norm_skeleton_batch_fast_impl(skeleton_batch):
     return global_angles_batch, view_norm_skeleton_batch
 
 
-def __root_relative_to_view_norm_skeleton_batch_basic_impl(skeleton_batch, angles):
+def __root_relative_to_view_norm_skeleton_batch_fast_impl(skeleton_batch, angles):
     # [d1, d2, d3..., num_joints, 3]
     # only operates on last two dimensions, rest will be considered batch
     orig_shape = skeleton_batch.shape
@@ -432,7 +580,7 @@ def __root_relative_to_view_norm_skeleton_batch_basic_impl(skeleton_batch, angle
 ###########################################################
 ######## Local to View Norm Conversion Functions ##########
 
-def __local_to_view_norm_batch_fast_impl(local_skeleton_batch):
+def __local_to_view_norm_batch_basic_impl(local_skeleton_batch):
     orig_shape = local_skeleton_batch.shape
     local_skeleton_batch = local_skeleton_batch.reshape(-1, *orig_shape[-2:])
 
@@ -455,10 +603,21 @@ def __local_to_view_norm_batch_fast_impl(local_skeleton_batch):
     return view_norm_skeleton_batch
 
 
+def __local_to_view_norm_batch_fast_impl(local_skeleton_batch):
+    orig_shape = local_skeleton_batch.shape
+    local_skeleton_batch = local_skeleton_batch.reshape(-1, *orig_shape[-2:])
+
+    view_norm_skeleton_batch = prior_local2global_batch(local_skeleton_batch)
+
+    view_norm_skeleton_batch = view_norm_skeleton_batch.reshape(*orig_shape)
+
+    return view_norm_skeleton_batch
+
+
 ###########################################################
 ######## View Norm to Local Conversion Functions ##########
 
-def __view_norm_to_local_batch_fast_impl(view_norm_skeleton_batch):
+def __view_norm_to_local_batch_basic_impl(view_norm_skeleton_batch):
     orig_shape = view_norm_skeleton_batch.shape
     view_norm_skeleton_batch = view_norm_skeleton_batch.reshape(-1, *orig_shape[-2:])
 
@@ -481,6 +640,17 @@ def __view_norm_to_local_batch_fast_impl(view_norm_skeleton_batch):
     return local_skeleton_batch
 
 
+def __view_norm_to_local_batch_fast_impl(view_norm_skeleton_batch):
+    orig_shape = view_norm_skeleton_batch.shape
+    view_norm_skeleton_batch = view_norm_skeleton_batch.reshape(-1, *orig_shape[-2:])
+
+    local_skeleton_batch = prior_global2local_batch(view_norm_skeleton_batch)
+
+    local_skeleton_batch = local_skeleton_batch.reshape(*orig_shape)
+
+    return local_skeleton_batch
+
+
 ###########################################################
 ######## View Norm to Root Relative Conversion Functions ##########
 def __get_root_relative_from_view_norm_skeleton_fast(args):
@@ -493,7 +663,7 @@ def __get_root_relative_from_view_norm_skeleton_fast(args):
     return root_relative_skeleton
 
 
-def __view_norm_to_root_relative_skeleton_batch_fast_impl(global_angles_batch, view_norm_skeleton_batch):
+def __view_norm_to_root_relative_skeleton_batch_basic_impl(global_angles_batch, view_norm_skeleton_batch):
     global_angles_orig_shape = global_angles_batch.shape
     skeleton_batch_orig_shape = view_norm_skeleton_batch.shape
 
@@ -519,7 +689,7 @@ def __view_norm_to_root_relative_skeleton_batch_fast_impl(global_angles_batch, v
     return global_skeleton_batch
 
 
-def __view_norm_to_root_relative_skeleton_batch_basic_impl(global_angles_batch, view_norm_skeleton_batch):
+def __view_norm_to_root_relative_skeleton_batch_fast_impl(global_angles_batch, view_norm_skeleton_batch):
     global_angles_orig_shape = global_angles_batch.shape
     skeleton_batch_orig_shape = view_norm_skeleton_batch.shape
 
@@ -547,7 +717,7 @@ def __get_root_relative_global_skeleton_fast(args):
     return root_relative_skeleton
 
 
-def __local_to_root_relative_skeleton_batch_basic_impl(global_angles_batch, local_skeleton_batch):
+def __local_to_root_relative_skeleton_batch_fast_impl(global_angles_batch, local_skeleton_batch):
     global_angles_orig_shape = global_angles_batch.shape
     skeleton_batch_orig_shape = local_skeleton_batch.shape
 
@@ -564,7 +734,7 @@ def __local_to_root_relative_skeleton_batch_basic_impl(global_angles_batch, loca
     return global_skeleton_batch
 
 
-def __local_to_root_relative_skeleton_batch_fast_impl(global_angles_batch, local_skeleton_batch):
+def __local_to_root_relative_skeleton_batch_basic_impl(global_angles_batch, local_skeleton_batch):
     global_angles_orig_shape = global_angles_batch.shape
     skeleton_batch_orig_shape = local_skeleton_batch.shape
 
@@ -590,15 +760,7 @@ def __local_to_root_relative_skeleton_batch_fast_impl(global_angles_batch, local
     return global_skeleton_batch
 
 
-def local_to_view_norm_skeleton_batch(local_skeleton_batch, fast=True):
-    return __local_to_view_norm_batch_fast_impl(local_skeleton_batch)
-
-
-def view_norm_to_local_skeleton_batch(view_norm_skeleton_batch, fast=True):
-    return __view_norm_to_local_batch_fast_impl(view_norm_skeleton_batch)
-
-
-def root_relative_to_view_norm_skeleton_batch(root_relative_skeleton_batch, fast=False, angles='azimuth'):
+def root_relative_to_view_norm_skeleton_batch(root_relative_skeleton_batch, fast=True, angles='azimuth'):
     if fast:
         __func = __root_relative_to_view_norm_skeleton_batch_fast_impl
     else:
@@ -606,7 +768,15 @@ def root_relative_to_view_norm_skeleton_batch(root_relative_skeleton_batch, fast
     return __func(root_relative_skeleton_batch, angles)
 
 
-def view_norm_to_root_relative_skeleton_batch(global_angles_batch, view_norm_skeleton_batch, fast=False):
+def root_relative_to_local_skeleton_batch(skeleton_batch, angles=default_angles, fast=True):
+    if fast:
+        __func = __root_relative_to_local_skeleton_batch_fast_impl
+    else:
+        __func = __root_relative_to_local_skeleton_batch_basic_impl
+    return __func(skeleton_batch, angles)
+
+
+def view_norm_to_root_relative_skeleton_batch(global_angles_batch, view_norm_skeleton_batch, fast=True):
     if fast:
         __func = __view_norm_to_root_relative_skeleton_batch_fast_impl
     else:
@@ -614,12 +784,12 @@ def view_norm_to_root_relative_skeleton_batch(global_angles_batch, view_norm_ske
     return __func(global_angles_batch, view_norm_skeleton_batch)
 
 
-def root_relative_to_local_skeleton_batch(skeleton_batch, fast=True):
+def view_norm_to_local_skeleton_batch(view_norm_skeleton_batch, fast=True):
     if fast:
-        __func = __root_relative_to_local_skeleton_batch_fast_impl
+        __func = __view_norm_to_local_batch_fast_impl
     else:
-        __func = __root_relative_to_local_skeleton_batch_basic_impl
-    return __func(skeleton_batch)
+        __func = __view_norm_to_local_batch_basic_impl
+    return __func(view_norm_skeleton_batch)
 
 
 def local_to_root_relative_skeleton_batch(global_angles_batch, local_skeleton_batch, fast=True):
@@ -628,3 +798,11 @@ def local_to_root_relative_skeleton_batch(global_angles_batch, local_skeleton_ba
     else:
         __func = __local_to_root_relative_skeleton_batch_basic_impl
     return __func(global_angles_batch, local_skeleton_batch)
+
+
+def local_to_view_norm_skeleton_batch(local_skeleton_batch, fast=True):
+    if fast:
+        __func = __local_to_view_norm_batch_basic_impl
+    else:
+        __func = __local_to_view_norm_batch_fast_impl
+    return __func(local_skeleton_batch)

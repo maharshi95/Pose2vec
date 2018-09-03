@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 from cv2 import cv2
 from scipy.io import loadmat
@@ -200,3 +202,43 @@ class Ax3DPose(object):
 
     def get_img(self):
         pass
+
+
+def create_video(skeleton_batch, frames_dir, vid_path, fps=25):
+    """
+    :param skeleton_batch:
+    :param frames_dir:
+    :param vid_path:
+    :param fps:
+    :return: HTML content to play this video on Jupyter Notebook
+    >>> from IPython.display import HTML
+    >>> html_content = create_video(sk_batch, frames_dir, vid_path, 25)
+    >>> HTML(html_content)
+    >>> '*** Embedded Video in Jupyter Cell Output ***'
+    """
+    if not vid_path.endswith('.mp4'):
+        vid_path += '.mp4'
+    ob = Ax3DPose()
+    fname_format = os.path.join(frames_dir, 'frame-%03d.png')
+    vid_dir = os.path.dirname(vid_path)
+    os.system('mkdir -p {}'.format(frames_dir))
+    os.system('mkdir -p {}'.format(vid_dir))
+    for i, skeleton in enumerate(skeleton_batch):
+        ob.update(skeleton)
+        fname = fname_format % i
+        plt.savefig(fname)
+    make_video_cmd = "ffmpeg -y -r {fps} -i {filename_format} -vcodec libx264 -crf 0  -pix_fmt yuv720p {video_filename}".format(
+        fps=fps,
+        filename_format=fname_format,
+        video_filename=vid_path
+    )
+    print(make_video_cmd)
+    os.system(make_video_cmd)
+
+    return (
+        """
+        <video width="320" height="240" controls>
+          <source src="{}" type="video/mp4">
+        </video>
+        """.format(vid_path)
+    )
