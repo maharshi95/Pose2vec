@@ -65,31 +65,9 @@ def getT(alpha, beta, gamma):
     return np.dot(np.dot(T_a, T_b), T_g)
 
 
-# def gram_schmidt(A):
-#     if len(A.shape) != 2 or A.shape[0] != A.shape[1]:
-#         raise Exception('GramSchmidt: not valid shape %d' % A.shape)
-#     n = A.shape[0]
-#
-#     B = np.zeros((n, n))
-#
-#     B[0] = unit_norm(A[0])
-#
-#     for i in range(1, n):
-#         v = A[i]
-#         U = B[:i]
-#         pc = np.dot(U, v)
-#         p = np.dot(U.T, pc)
-#         v = v - p
-#         v = unit_norm(v)
-#         if np.linalg.norm(v) < eps:
-#             raise Exception('GramSchmidt: 0 norm exception : %s' % str(v))
-#         B[i] = v
-#     return B
-
-
 def gram_schmidt(V):
-    # Works only for 3x3 matrices
-    # V: [B, 3, 3]
+    # Works only for 3x3 matrix / matrices
+    # V: [B, 3, 3] or [3, 3]
     rank = len(V.shape)
     if rank > 3 or rank < 2:
         raise Exception("gram_schmidt: invalid rank: %d" % rank)
