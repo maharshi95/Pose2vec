@@ -1,5 +1,5 @@
 import traceback
-from src.hyperparams import Hyperparams as H
+from .hyperparams import Hyperparams as H
 import os
 import numpy as np
 import tensorflow as tf
@@ -24,7 +24,7 @@ lr_disc_ph = tf.placeholder(H.dtype, shape=[], name='lr_disc_ph')
 lr_encoder_ph = tf.placeholder(H.dtype, shape=[], name='lr_encoder_ph')
 lr_decoder_ph = tf.placeholder(H.dtype, shape=[], name='lr_decoder_ph')
 
-# Weight Vector
+# Weight Vector for Discriminator
 weight_vec_ph = tf.placeholder(H.dtype, shape=[23, ], name='weight_vec_ph')
 
 ###################################################################################
@@ -106,9 +106,9 @@ loss_z_recon = tf.reduce_mean(tensor_z_loss)
 loss_cyclic = loss_x_recon + loss_z_recon
 
 ### Total loss ###
-loss_disc = 20 * loss_disc_adv
+loss_disc = loss_disc_adv
 loss_encoder = 100 * loss_cyclic
-loss_decoder = 100 * loss_cyclic + 20 * loss_gen_adv
+loss_decoder = 100 * loss_cyclic + 5 * loss_gen_adv
 
 
 # loss_decoder = 0.002 * loss_gen_adv + (1 - 0.002) * loss_cyclic
@@ -212,17 +212,17 @@ summary_merge_valid = tf.summary.merge(scalars + z_j_histograms)
 ##################################################################################################
 
 
-def load_weights(iter_no, session, dir='pretrained_weights', iter_or_best='iter'):
-    print 'trying to load iter weights...'
+def load_weights(iter_no, session, dir='pretrained_weights', tag='iter'):
+    print ('trying to load iter weights...')
     for network in ['encoder', 'decoder']:
-        path = os.path.join(dir, '{}_{}-{}'.format(network, iter_or_best, iter_no))
+        path = os.path.join(dir, '{}_{}-{}'.format(network, tag, iter_no))
         tf.train.Saver(params[network]).restore(session, path)
     return iter_no
 
 
 def load_best_weights(iter_no, session, dir='pretrained_weights'):
     try:
-        print 'trying to load best weights...'
+        print ('trying to load best weights...')
         tf.train.Saver(param_decoder).restore(session, '%s/decoder_best-%d' % (dir, iter_no))
         tf.train.Saver(param_encoder).restore(session, '%s/encoder_best-%d' % (dir, iter_no))
         tf.train.Saver(param_disc).restore(session, '%s/disc_best-%d' % (dir, iter_no))

@@ -1,13 +1,11 @@
-import traceback
-
-import os, time
-import sys
+import os, time, sys, traceback
 
 import utils
 import numpy as np
 import tensorflow as tf
 
 # import load_batch_data as data_loader
+from .hyperparams import Hyperparams as H
 from data_loader import DataLoader
 from commons import transform_util as tr_util
 from model_componets import *
@@ -26,11 +24,11 @@ if del_logs_flag or not resume_flag:
     print '\ndeleting logs/\n'
     os.system('rm -rf logs/')
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 train_batch_size, test_batch_size = 256, 256
 
-lr_disc, lr_encoder, lr_decoder = 0.000002, 0.000002, 0.000002
+lr_disc, lr_encoder, lr_decoder = 2e-6, 2e-6, 2e-6
 
 disp_step_save, disp_step_valid = 1000, 500
 
@@ -53,10 +51,12 @@ epoch, iteration_no = 0, 0
 if resume_flag or load_weights_flag:
     os.system('mkdir -p pretrained_weights')
     try:
-        iteration_no = utils.copy_latest('iter')
+        # iteration_no = utils.copy_latest('iter')
+        iteration_no = 2958501
         print 'Loading encoder-decoder weights from iter-%d' % iteration_no
         print 'Loading disc weights from iter-%d' % iteration_no
-        M.load_weights(iteration_no, session_1)
+        weights_dir = 'pretrained_weights/%s' % H.sk_transform_type
+        M.load_weights(iteration_no, session_1, dir=weights_dir, tag='float32')
     except:
         traceback.print_exc()
         print ('Some Problem Occured while resuming... starting from iteration {}'.format(iteration_no))
@@ -220,35 +220,11 @@ while epoch < num_epochs:
             data_loader.shuffle_data('test')
             for batch_idx_test in range(num_test_batch_iterations):
                 x_inputs = data_loader.get_test_data_batch(test_batch_size, batch_idx_test)
-                # g_inputs, _ = tr_util.root_relative_to_view_norm_skeleton_batch(x_inputs, fast=False)
-
-                # x_inputs_aa = x_inputs[:test_batch_size]
-                # x_inputs_bb = x_inputs[test_batch_size:]
-
-                # g_inputs_aa = g_inputs[:test_batch_size]
-                # g_inputs_bb = g_inputs[test_batch_size:]
-
-                # x_outputs_ab, x_outputs_ba = tr_util.joint_angle_crossover(x_inputs_aa, x_inputs_bb, fast=False)
-
-                # z_a_batch = np.random.uniform(-np.pi, np.pi, size=[test_batch_size, 3])
-                # z_j_batch = np.random.normal(0, 1, size=[test_batch_size, num_zdim])
-                z_j_batch = np.random.uniform(-1, 1, size=[test_batch_size, num_zdim])
-                # z_j_batch = unit_norm(z_j_batch, axis=-1)
+                z_batch = np.random.uniform(-1, 1, size=[test_batch_size, num_zdim])
 
                 feed_dict = {
                     M.input_x: x_inputs,
-                    # M.input_aa_x: x_inputs_aa,
-                    # M.input_bb_x: x_inputs_bb,
-
-                    # M.input_aa_g: g_inputs_aa,
-                    # M.input_bb_g: g_inputs_bb,
-
-                    # M.output_ab_x: x_outputs_ab,
-                    # M.output_ba_x: x_outputs_ba,
-
-                    M.input_z: z_j_batch,
-                    # M.input_angles_z: z_a_batch,
-
+                    M.input_z: z_batch,
                     M.weight_vec_ph: weight_vec,
                 }
                 op_val = session_1.run([M.loss_encoder, M.summary_merge_valid], feed_dict)

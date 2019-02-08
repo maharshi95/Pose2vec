@@ -2,6 +2,7 @@ import os
 
 import numpy as np
 from cv2 import cv2
+from matplotlib.gridspec import GridSpec
 from scipy.io import loadmat
 
 from matplotlib import pyplot as plt
@@ -203,6 +204,17 @@ class Ax3DPose(object):
     def get_img(self):
         pass
 
+def create_skeleton_grid(sk_batch, nrows, ncols):
+    assert sk_batch.shape[0] <= nrows * ncols, 'Number skeletons exceeds the grid capacity'
+    fig = plt.figure(figsize=(ncols * 2, nrows * 2))
+    spec = GridSpec(nrows, ncols, figure=fig, hspace=0.0, wspace=0.0)
+    axes = []
+    for i in range(nrows):
+        for j in range(ncols):
+            axes.append(Ax3DPose(fig.add_subplot(spec[i, j], projection='3d')))
+    for k in range(len(sk_batch)):
+        axes[k].update(sk_batch[k])
+    return fig
 
 def create_video(skeleton_batch, frames_dir, vid_path, fps=25):
     """

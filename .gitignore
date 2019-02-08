@@ -1,5 +1,7 @@
 # Created by .ignore support plugin (hsz.mobi)
-
-.idea/
-
 *.pyc
+.idea/
+pose2/
+data/*
+pretrained_weights/azimuth/*
+pretrained_weights/euler/*

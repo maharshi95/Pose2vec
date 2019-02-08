@@ -20,8 +20,7 @@ from model_utils import PoseModel
 
 results_dir = 'results_test'
 
-
-model = PoseModel()
+model = PoseModel(H.best_iter_no)
 
 def recon_path(dir_name='reconstructed'):
     return os.path.join(results_dir, dir_name)

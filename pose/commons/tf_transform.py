@@ -1,8 +1,8 @@
-from src.hyperparams import Hyperparams as H
+from __future__ import absolute_import
 import tensorflow as tf
-import numpy as np
 
-import prior_sk_data as sk_data
+from pose.hyperparams import Hyperparams as H
+from . import prior_sk_data as sk_data
 
 dtype = H.dtype
 

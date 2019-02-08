@@ -1,4 +1,6 @@
 import numpy as np
+np.random.seed(42)
+
 from scipy.io import savemat, loadmat
 
 import utils, data_paths

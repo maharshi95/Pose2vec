@@ -1,12 +1,15 @@
+from __future__ import print_function
+
 import json
+from collections import OrderedDict
+
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as tf_layer
+from .hyperparams import Hyperparams as H
 
-from collections import OrderedDict
-from src.hyperparams import Hyperparams as H
-from .commons import tf_transform as tr
 from .commons import prior_sk_data as sk_data
+from .commons import tf_transform as tr
 
 dtype = H.dtype
 
@@ -14,7 +17,7 @@ dtype = H.dtype
 def debug_dict(d):
     d = {k: str(d[k]) for k in d}
     s = json.dumps(d, indent=4, sort_keys=True)
-    print s
+    print(s)
 
 
 ########################### Encoder Decoder Discriminator Architecture ##########################
@@ -33,10 +36,14 @@ limb_lengths = tf.constant(sk_data.limb_ratios * 2, dtype=dtype)
 
 def unit_norm(tensor, axis=-1):
     norm = tf.norm(tensor, axis=axis, keep_dims=True)
-    return tensor / (norm + 1e-9)
+    return tensor / (norm + 1e-15)
 
 
 def path_from_pelvis(joint_index):
+    """
+    :param joint_index: scalar joint index
+    :return: a list of indices starting from root/pelvis to the joint_index, representing the path from pelvis to the given joint
+    """
     if limb_parents[joint_index] == joint_index:
         return [joint_index]
     return path_from_pelvis(limb_parents[joint_index]) + [joint_index]
@@ -61,7 +68,11 @@ def get_root_relative_joints(parent_relative_joints):
     return root_relative_joints
 
 
-def get_skeleton_transform_matrix(skeleton_batch):
+def get_euler_transform_matrix(skeleton_batch):
+    """
+    Returns an affine transform matrix to rotate the given batch of skeleton to the euler view norm format.
+    :param skeleton_batch: [batch_size, 17, 3]
+    """
     # skeleton_batch: [B, 17, 3]
     right_hip = sk_data.get_joint_index('right_hip')
     left_hip = sk_data.get_joint_index('left_hip')
@@ -77,13 +88,11 @@ def get_skeleton_transform_matrix(skeleton_batch):
     x_ = tf.cross(y_, z_)
 
     transform_mats = tf.concat([x_, y_, z_], axis=1)
-    print 'dets', tf.linalg.det(transform_mats)
-    print 'trasnforms_mats', transform_mats.shape
-
     return transform_mats
 
 
-def get_skeleton_z_transform_matrix(skeleton_batch):
+def get_azimuth_transform_matrix(skeleton_batch):
+    # Only For azimuth angle: gamma (rotation across Z axes)
     # skeleton_batch: [B, 17, 3]
     batch_size = tf.shape(skeleton_batch)[0]
     right_hip = sk_data.get_joint_index('right_hip')
@@ -99,8 +108,16 @@ def get_skeleton_z_transform_matrix(skeleton_batch):
     return transform_mats
 
 
-def root_relative_to_view_norm(skeleton_batch):
-    transform_mats = get_skeleton_z_transform_matrix(skeleton_batch)
+def get_skeleton_transform_matrix(skeleton_batch, transform_type='azimuth'):
+    transform_func = {
+        'azimuth': get_azimuth_transform_matrix,
+        'euler': get_euler_transform_matrix
+    }[transform_type]
+    return transform_func(skeleton_batch)
+
+
+def root_relative_to_view_norm(skeleton_batch, transform_type='azimuth'):
+    transform_mats = get_skeleton_transform_matrix(skeleton_batch, transform_type)
     sk_batch_view_norm = tf.matmul(skeleton_batch, transform_mats, transpose_b=True)
     return sk_batch_view_norm, transform_mats
 
@@ -109,8 +126,8 @@ def view_norm_to_root_relative(skeleton_batch, transform_mats):
     return tf.matmul(skeleton_batch, transform_mats)
 
 
-def root_relative_to_local(skeleton_batch):
-    sk_batch_view_norm, transform_mats = root_relative_to_view_norm(skeleton_batch)
+def root_relative_to_local(skeleton_batch, transform_type='azimuth'):
+    sk_batch_view_norm, transform_mats = root_relative_to_view_norm(skeleton_batch, transform_type)
     sk_batch_local = tr.tf_global2local(sk_batch_view_norm)
     sk_batch_local = unit_norm(sk_batch_local, axis=-1)
     return sk_batch_view_norm, sk_batch_local, transform_mats
@@ -136,8 +153,8 @@ def local_to_view_norm(skeleton_batch):
 
 
 def get_relu_fn(use_relu=True, leak=0.2):
-    def lrelu(x, leak=leak, name="lrelu"):
-        return tf.maximum(x, leak * x)
+    def lrelu(x, leak=leak):
+        return tf.nn.leaky_relu(x, leak)
 
     return tf.nn.relu if use_relu else lrelu
 

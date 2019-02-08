@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+from hyperparams import Hyperparams as H
 import model as M
 
 import utils
@@ -24,15 +25,11 @@ class PoseModel(object):
         if iter_no is not None:
             self.iter_no = iter_no
             print('Trying to load iter no:', self.iter_no)
-            M.load_best_weights(self.iter_no, self.session)
-        elif utils.get_exp_name() == 'exp_1':
-            self.iter_no = 859501
-            print('Trying to load iter no:', self.iter_no)
-            M.load_weights(self.iter_no, self.session)
+            M.load_weights(self.iter_no, self.session, H.best_weights_path, H.best_weights_tag)
         else:
-            self.iter_no = utils.copy_latest()
+            self.iter_no = H.best_iter_no
             print('Trying to load iter no:', self.iter_no)
-            M.load_best_weights(self.iter_no, self.session)
+            M.load_weights(self.iter_no, self.session, H.best_weights_path, H.best_weights_tag)
 
     @property
     def iter_number(self):

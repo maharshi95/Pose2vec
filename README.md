@@ -17,6 +17,16 @@ If you find this work useful in your research, please consider citing:
 }
 ```
 
+### Data and Pretrained Weights
+Use the following command to download the data and pretrained weights.
+```
+# For downloading the data. It will be saved in the data/ directory
+python -m scripts.download_data
+
+# For downloading the pretrained weights. It will be saved in the pretrained_weights/azimuth/ directory
+python -m scripts.download_weights
+```
+
 ### Qualitative Results:
 - Grid Interpolations <br>
 <img src="./docs/interpolation.png" width="400">
